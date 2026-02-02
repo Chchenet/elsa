@@ -1,0 +1,73 @@
+.parts-table-container {
+  margin-top: 20px;
+}
+
+.parts-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.parts-table th {
+  background: #2c3e50;
+  color: white;
+  padding: 12px;
+  text-align: left;
+  font-weight: normal;
+}
+
+.parts-table td {
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.parts-table tr:hover {
+  background: #f8f9fa;
+}
+
+.part-number {
+  font-family: 'Courier New', monospace;
+  color: #2980b9;
+  font-weight: bold;
+}
+
+.category-badge {
+  background: #e8f4fc;
+  color: #2980b9;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.price {
+  font-weight: bold;
+  color: #27ae60;
+}
+
+.stock.in-stock {
+  color: #27ae60;
+}
+
+.stock.low-stock {
+  color: #e74c3c;
+}
+
+.add-to-cart-btn {
+  background: #3498db;
+  color: white;
+  border: none;
+  padding: 8px 15px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.add-to-cart-btn:hover {
+  background: #2980b9;
+}
+
+.add-to-cart-btn:disabled {
+  background: #bdc3c7;
+  cursor: not-allowed;
+}

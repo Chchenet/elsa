@@ -1,0 +1,28 @@
+.header {
+  background: #2c3e50;
+  color: white;
+  padding: 15px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logo h2 {
+  margin: 0;
+}
+
+.search input {
+  padding: 8px;
+  width: 300px;
+  border-radius: 4px 0 0 4px;
+  border: none;
+}
+
+.search button {
+  padding: 8px 15px;
+  background: #3498db;
+  color: white;
+  border: none;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+}

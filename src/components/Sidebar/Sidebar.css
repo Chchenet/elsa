@@ -1,0 +1,53 @@
+.sidebar {
+  width: 300px;
+  background: #f8f9fa;
+  padding: 20px;
+  border-right: 1px solid #ddd;
+  min-height: 100vh;
+}
+
+.car-list {
+  margin-top: 15px;
+}
+
+.car-item {
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.car-item:hover {
+  background: #e9ecef;
+  border-color: #3498db;
+}
+
+.car-item.selected {
+  background: #d6eaf8;
+  border-color: #3498db;
+}
+
+.car-brand {
+  font-weight: bold;
+  color: #2c3e50;
+}
+
+.car-model {
+  color: #34495e;
+}
+
+.car-details {
+  font-size: 12px;
+  color: #7f8c8d;
+  margin-top: 5px;
+}
+
+.selected-car-info {
+  margin-top: 20px;
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #3498db;
+}
