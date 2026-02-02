@@ -1,304 +1,120 @@
-import React, { useState, useRef, useEffect } from 'react';
-import SmartOCRService from '../../services/SmartOCRService';
-import AutoOCRService from '../../services/AutoOCRService';
+import React, { useState, useRef } from 'react';
+import TesseractOCRService from '../../services/TesseractOCRService';
 import './OCRDiagramViewer.css';
 
-// Компонент для просмотра и умного распознавания схемы
 const OCRDiagramViewer = () => {
-  const [image, setImage] = useState(null);
   const [imageUrl, setImageUrl] = useState('');
-  const [recognizedDigits, setRecognizedDigits] = useState([]);
   const [parts, setParts] = useState([]);
-  const [selectedPart, setSelectedPart] = useState(null);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('Выберите изображение схемы');
-  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
-  const [processingStep, setProcessingStep] = useState('');
-  const [showProcessingSteps, setShowProcessingSteps] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const imageRef = useRef(null);
   const fileInputRef = useRef(null);
-  const canvasRef = useRef(null);
-
-  useEffect(() => {
-    // Если у нас есть внутренний канвас для обработки, установим его в AutoOCRService
-    if (canvasRef.current) {
-      AutoOCRService.setCanvas(canvasRef.current, 1);
-    }
-  }, [canvasRef.current]);
 
   const handleImageUpload = (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files && e.target.files[0];
     if (!file) return;
-
-    setStatus('📷 Загружаем изображение...');
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const url = ev.target.result;
-      setImageUrl(url);
-      setImage(file);
-      setStatus('✅ Изображение загружено. Нажмите "Умное распознавание"');
-      setLoading(false);
-
-      setRecognizedDigits([]);
+      setImageUrl(ev.target.result);
       setParts([]);
-      setSelectedPart(null);
+      setStatus('Изображение загружено. Нажмите "Распознать"');
     };
     reader.readAsDataURL(file);
   };
 
   const handleImageLoad = () => {
-    if (!imageRef.current) return;
-
-    // ВАЖНО: используем naturalWidth/naturalHeight чтобы получать реальные пиксели исходного изображения
-    const natW = imageRef.current.naturalWidth || imageRef.current.width;
-    const natH = imageRef.current.naturalHeight || imageRef.current.height;
-
-    setImageSize({ width: natW, height: natH });
-
-    // Подготавливаем внутренний канвас для AutoOCRService с тем же натуральным размером
-    const canvas = document.createElement('canvas');
-    canvas.width = natW;
-    canvas.height = natH;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, natW, natH);
-    ctx.drawImage(imageRef.current, 0, 0, natW, natH);
-
-    // Сохраняем канвас в ref и в AutoOCRService
-    canvasRef.current = canvas;
-    AutoOCRService.setCanvas(canvas, 1); // масштаб 1: координаты OCR должны быть в натуральных пикселях
+    // ничего не передаём в worker напрямую
+    setStatus('Изображение готово');
   };
 
-  const handleSmartRecognize = async () => {
-    if (!image) {
-      setStatus('⚠️ Сначала загрузите изображение');
-      return;
-    }
-
+  const handleRecognize = async () => {
+    if (!imageRef.current) { setStatus('Сначала загрузите изображение'); return; }
     setLoading(true);
-    setShowProcessingSteps(true);
-
-    const steps = [
-      '🚀 Запуск умного распознавания...',
-      '📷 Анализ схемы двигателя...',
-      '🎯 Определение типа схемы...',
-      '🔍 Поиск крупных компонентов...',
-      '📐 Автоматическая калибровка...',
-      '🤖 Распознавание цифр...',
-      '🎨 Группировка по системам...',
-      '✅ Создание интерактивной схемы...'
-    ];
-
+    setStatus('Распознавание...');
     try {
-      for (let i = 0; i < steps.length; i++) {
-        setProcessingStep(steps[i]);
-        // небольшая задержка для UX
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise(resolve => setTimeout(resolve, 180));
-      }
+      // Передаём imageRef.current — сервис внутри создаёт canvas и передаёт dataURL/Blob в worker
+      const symbols = await TesseractOCRService.recognizeImage(imageRef.current, { onlyDigits: true });
+      console.log('Tesseract symbols:', symbols);
 
-      // Используем SmartOCRService для предварительного анализа и OCR
-      const results = await SmartOCRService.quickSmartRecognize(image);
-
-      console.log('Результаты умного распознавания (raw):', results);
-
-      // ОЖИДАНИЕ: SmartOCRService.quickSmartRecognize возвращает массив объектов,
-      // где у каждого есть x,y,width,height в натуральных пикселях и digit/confidence, system, ...
-      // Если OCR отдаёт координаты в процентах — необходимо масштабировать
-      const normalizedResults = results.map(r => {
-        // Определим, похоже ли значение в пикселях или в процентах (простая эвристика)
-        let out = { ...r };
-        if (r.x <= 1 && r.y <= 1 && r.width <= 1 && r.height <= 1 && imageSize.width && imageSize.height) {
-          out.x = Math.round(r.x * imageSize.width);
-          out.y = Math.round(r.y * imageSize.height);
-          out.width = Math.round(r.width * imageSize.width);
-          out.height = Math.round(r.height * imageSize.height);
-        }
-        return out;
+      // Простая группировка в числа (по строкам и близости)
+      symbols.sort((a, b) => {
+        if (Math.abs(a.y - b.y) < 10) return a.x - b.x;
+        return a.y - b.y;
       });
 
-      // Если требуется — дополнительно прогнать через AutoOCRService (локальное сравнение)
-      const recognized = [];
-      for (const res of normalizedResults) {
-        try {
-          const region = AutoOCRService.extractDigitRegion(res);
-          const single = AutoOCRService.recognizeSingleDigit(region);
-          if (single && single.digit) {
-            recognized.push({
-              digit: single.digit,
-              confidence: single.confidence,
-              x: res.x,
-              y: res.y,
-              width: res.width,
-              height: res.height,
-              system: res.system || null,
-            });
-          } else {
-            // fallback: если локальное распознавание не уверено, берём OCR результат (если есть)
-            recognisedFallback:
-            recognized.push({
-              digit: res.digit || null,
-              confidence: res.confidence || 0,
-              x: res.x,
-              y: res.y,
-              width: res.width,
-              height: res.height,
-              system: res.system || null,
-            });
-          }
-        } catch (err) {
-          console.warn('Ошибка обработки региона:', err);
+      const grouped = [];
+      for (const s of symbols) {
+        if (grouped.length === 0) {
+          grouped.push({ text: s.digit, x: s.x, y: s.y, x2: s.x + s.width, y2: s.y + s.height, conf: s.confidence });
+          continue;
+        }
+        const last = grouped[grouped.length - 1];
+        const sameLine = Math.abs(s.y - last.y) < Math.max(12, Math.round((last.y2 - last.y) / 2));
+        const gap = s.x - last.x2;
+        if (sameLine && gap < Math.max(20, Math.round((s.width + (last.x2 - last.x)) / 2))) {
+          last.text += s.digit;
+          last.x2 = Math.max(last.x2, s.x + s.width);
+          last.y2 = Math.max(last.y2, s.y + s.height);
+          last.conf = Math.max(last.conf, s.confidence);
+        } else {
+          grouped.push({ text: s.digit, x: s.x, y: s.y, x2: s.x + s.width, y2: s.y + s.height, conf: s.confidence });
         }
       }
 
-      setRecognizedDigits(recognized);
-
-      // Создаём объекты parts для интерфейса — id уникален по координатам/цифре
-      const newParts = recognized.map((result, idx) => {
-        const partInfo = {}; // Здесь можно подгружать из базы partsDatabase, но оставим базовый шаблон
-        const number = partInfo.number || `UNKNOWN-${result.digit}-${idx}`;
-        const name = partInfo.name || `Деталь ${result.digit}`;
-        const systemColor = '#8A8A8A';
-
-        return {
-          id: `${result.digit}-${idx}-${result.x}-${result.y}`,
-          number,
-          name,
-          price: partInfo.price || 0,
-          category: partInfo.category || 'Неизвестно',
-          system: result.system || partInfo.system || 'other',
-          color: systemColor,
-          confidence: result.confidence || 0,
-          coordinates: {
-            x: Math.round(result.x),
-            y: Math.round(result.y),
-            width: Math.max(10, Math.round(result.width || imageSize.width * 0.05)),
-            height: Math.max(10, Math.round(result.height || imageSize.height * 0.05))
-          }
-        };
-      });
+      const newParts = grouped.map((g, idx) => ({
+        id: `part-${idx}`,
+        number: g.text,
+        name: `Деталь ${g.text}`,
+        confidence: g.conf,
+        coordinates: { x: Math.round(g.x), y: Math.round(g.y), width: Math.max(8, Math.round(g.x2 - g.x)), height: Math.max(8, Math.round(g.y2 - g.y)) }
+      }));
 
       setParts(newParts);
-      setStatus(`✅ Распознано ${newParts.length} позиций`);
+      setStatus(`Распознано ${newParts.length} позиций`);
     } catch (err) {
-      console.error('Ошибка умного распознавания:', err);
-      setStatus('❌ Ошибка распознавания. Смотрите консоль.');
+      console.error('Ошибка распознавания:', err);
+      setStatus('Ошибка распознавания — смотрите консоль');
     } finally {
       setLoading(false);
-      setShowProcessingSteps(false);
-      setProcessingStep('');
     }
   };
 
   const handleReset = () => {
-    setImage(null);
     setImageUrl('');
-    setRecognizedDigits([]);
     setParts([]);
-    setSelectedPart(null);
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
     setStatus('Выберите изображение схемы');
     if (fileInputRef.current) fileInputRef.current.value = '';
-    // очистим внутренний canvas
-    canvasRef.current = null;
-    AutoOCRService.setCanvas(null, 1);
-  };
-
-  // При клике по изображению — можно выбирать деталь (left/top учитывают трансформ)
-  const handleImageClick = (e) => {
-    // Преобразуем координаты клика в натуральные пиксели с учётом зума/пан
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = (e.clientX - rect.left - pan.x) / zoom;
-    const clickY = (e.clientY - rect.top - pan.y) / zoom;
-
-    const found = parts.find(p => {
-      const x = p.coordinates.x;
-      const y = p.coordinates.y;
-      const w = p.coordinates.width;
-      const h = p.coordinates.height;
-      return clickX >= x && clickX <= x + w && clickY >= y && clickY <= y + h;
-    });
-
-    if (found) {
-      setSelectedPart(found);
-    } else {
-      setSelectedPart(null);
-    }
   };
 
   return (
     <div className="ocr-diagram-viewer">
       <div className="ocr-control-panel">
-        <div className="ocr-upload-section">
-          <input
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            ref={fileInputRef}
-            style={{ display: 'none' }}
-            id="image-upload"
-          />
-          <label htmlFor="image-upload" className="ocr-upload-btn">
-            📁 Загрузить схему
-          </label>
+        <input type="file" accept="image/*" onChange={handleImageUpload} ref={fileInputRef} style={{ display: 'none' }} id="image-upload" />
+        <label htmlFor="image-upload" className="ocr-upload-btn">📁 Загрузить схему</label>
 
-          {imageUrl && (
-            <>
-              <button
-                onClick={handleSmartRecognize}
-                disabled={loading}
-                className="ocr-smart-btn"
-              >
-                🧠 Умное распознавание
-              </button>
-
-              <button
-                onClick={handleReset}
-                className="ocr-reset-btn"
-              >
-                ♻️ Сброс
-              </button>
-            </>
-          )}
-        </div>
-        <div className="ocr-status">{status}</div>
+        {imageUrl && (
+          <>
+            <button onClick={handleRecognize} disabled={loading} className="ocr-smart-btn">🧠 Распознать</button>
+            <button onClick={handleReset} className="ocr-reset-btn">♻️ Сброс</button>
+          </>
+        )}
+        <div className="ocr-status">{status}{loading ? ' ...' : ''}</div>
       </div>
 
-      <div className="ocr-image-container" style={{ position: 'relative' }}>
+      <div className="ocr-image-container">
         {imageUrl ? (
-          <div
-            className="ocr-image-wrapper"
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              transformOrigin: '0 0'
-            }}
-          >
-            <img
-              ref={imageRef}
-              src={imageUrl}
-              alt="Схема двигателя"
-              className="ocr-diagram-image"
-              onLoad={handleImageLoad}
-              onClick={handleImageClick}
-            />
-
+          <div className="ocr-image-wrapper" style={{ position: 'relative' }}>
+            <img ref={imageRef} src={imageUrl} alt="Схема" className="ocr-diagram-image" onLoad={handleImageLoad} style={{ display: 'block', maxWidth: '100%' }} />
             {parts.map(part => (
-              <div
-                key={part.id}
-                className={`ocr-digit-marker ${selectedPart?.id === part.id ? 'selected' : ''}`}
-                style={{
-                  left: `${part.coordinates.x}px`,
-                  top: `${part.coordinates.y}px`,
-                  width: `${part.coordinates.width}px`,
-                  height: `${part.coordinates.height}px`,
-                }}
-                title={`${part.name} (${part.number}) — confidence ${part.confidence}`}
-              >
-                <div className="ocr-digit-number">{part.number}</div>
-                <div className="digit-confidence">{Math.round(part.confidence * 100) / 100}</div>
+              <div key={part.id} className="ocr-digit-marker" style={{
+                position: 'absolute', left: `${part.coordinates.x}px`, top: `${part.coordinates.y}px`,
+                width: `${part.coordinates.width}px`, height: `${part.coordinates.height}px`,
+                border: '2px solid rgba(102,126,234,0.9)', background: 'rgba(102,126,234,0.12)', borderRadius: 8
+              }}>
+                <div style={{ position: 'absolute', top: '-22px', left: 0, background: '#667eea', color: '#fff', padding: '3px 6px', borderRadius: '12px', fontSize: 12, fontWeight: 700 }}>
+                  {part.number}
+                </div>
               </div>
             ))}
           </div>
