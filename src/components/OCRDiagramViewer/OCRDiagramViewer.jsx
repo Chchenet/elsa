@@ -1,120 +1,225 @@
-import React, { useState, useRef } from 'react';
-import TesseractOCRService from '../../services/TesseractOCRService';
+import React, { useState, useRef, useEffect } from 'react';
+import OCRSpaceService from '../../services/OCRSpaceService';
 import './OCRDiagramViewer.css';
 
 const OCRDiagramViewer = () => {
   const [imageUrl, setImageUrl] = useState('');
   const [parts, setParts] = useState([]);
-  const [status, setStatus] = useState('Выберите изображение схемы');
+  const [status, setStatus] = useState('Загрузите схему');
   const [loading, setLoading] = useState(false);
 
   const imageRef = useRef(null);
+  const wrapperRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  const handleImageUpload = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+  // Метрики изображения (натуральный и отображаемый размеры)
+  const [imgMetrics, setImgMetrics] = useState({
+    naturalWidth: 0,
+    naturalHeight: 0,
+    clientWidth: 0,
+    clientHeight: 0,
+    scaleX: 1,
+    scaleY: 1
+  });
+
+  // При загрузке файла
+  const handleUpload = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       setImageUrl(ev.target.result);
       setParts([]);
       setStatus('Изображение загружено. Нажмите "Распознать"');
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(f);
   };
 
+  // Когда изображение загружено в DOM — вычисляем метрики
   const handleImageLoad = () => {
-    // ничего не передаём в worker напрямую
+    if (!imageRef.current) return;
+    const natW = imageRef.current.naturalWidth || imageRef.current.width;
+    const natH = imageRef.current.naturalHeight || imageRef.current.height;
+    const cliW = imageRef.current.clientWidth;
+    const cliH = imageRef.current.clientHeight;
+
+    const scaleX = natW > 0 ? (cliW / natW) : 1;
+    const scaleY = natH > 0 ? (cliH / natH) : 1;
+
+    setImgMetrics({
+      naturalWidth: natW,
+      naturalHeight: natH,
+      clientWidth: cliW,
+      clientHeight: cliH,
+      scaleX,
+      scaleY
+    });
+
     setStatus('Изображение готово');
   };
 
-  const handleRecognize = async () => {
-    if (!imageRef.current) { setStatus('Сначала загрузите изображение'); return; }
-    setLoading(true);
-    setStatus('Распознавание...');
-    try {
-      // Передаём imageRef.current — сервис внутри создаёт canvas и передаёт dataURL/Blob в worker
-      const symbols = await TesseractOCRService.recognizeImage(imageRef.current, { onlyDigits: true });
-      console.log('Tesseract symbols:', symbols);
-
-      // Простая группировка в числа (по строкам и близости)
-      symbols.sort((a, b) => {
-        if (Math.abs(a.y - b.y) < 10) return a.x - b.x;
-        return a.y - b.y;
+  // Пересчёт при ресайзе окна (если изображение responsive)
+  useEffect(() => {
+    const onResize = () => {
+      if (!imageRef.current) return;
+      const natW = imageRef.current.naturalWidth || imageRef.current.width;
+      const natH = imageRef.current.naturalHeight || imageRef.current.height;
+      const cliW = imageRef.current.clientWidth;
+      const cliH = imageRef.current.clientHeight;
+      setImgMetrics({
+        naturalWidth: natW,
+        naturalHeight: natH,
+        clientWidth: cliW,
+        clientHeight: cliH,
+        scaleX: natW > 0 ? cliW / natW : 1,
+        scaleY: natH > 0 ? cliH / natH : 1
       });
+    };
+    window.addEventListener('resize', onResize);
+    // также наблюдаем за resize контейнера (если применимо)
+    let ro;
+    if (wrapperRef.current && 'ResizeObserver' in window) {
+      ro = new ResizeObserver(onResize);
+      ro.observe(wrapperRef.current);
+    }
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (ro && wrapperRef.current) ro.unobserve(wrapperRef.current);
+    };
+  }, []);
 
-      const grouped = [];
-      for (const s of symbols) {
-        if (grouped.length === 0) {
-          grouped.push({ text: s.digit, x: s.x, y: s.y, x2: s.x + s.width, y2: s.y + s.height, conf: s.confidence });
-          continue;
-        }
-        const last = grouped[grouped.length - 1];
-        const sameLine = Math.abs(s.y - last.y) < Math.max(12, Math.round((last.y2 - last.y) / 2));
-        const gap = s.x - last.x2;
-        if (sameLine && gap < Math.max(20, Math.round((s.width + (last.x2 - last.x)) / 2))) {
-          last.text += s.digit;
-          last.x2 = Math.max(last.x2, s.x + s.width);
-          last.y2 = Math.max(last.y2, s.y + s.height);
-          last.conf = Math.max(last.conf, s.confidence);
-        } else {
-          grouped.push({ text: s.digit, x: s.x, y: s.y, x2: s.x + s.width, y2: s.y + s.height, conf: s.confidence });
-        }
-      }
+  // Вызов OCR.space и обработка результатов
+  const handleRecognize = async () => {
+    if (!imageRef.current) {
+      setStatus('Сначала загрузите изображение');
+      return;
+    }
+    setLoading(true);
+    setStatus('Отправляю в OCR.space...');
+    try {
+      const symbols = await OCRSpaceService.recognizeDigits(imageRef.current, { language: 'eng' });
+      console.log('OCR.space symbols raw:', symbols);
 
-      const newParts = grouped.map((g, idx) => ({
-        id: `part-${idx}`,
-        number: g.text,
-        name: `Деталь ${g.text}`,
-        confidence: g.conf,
-        coordinates: { x: Math.round(g.x), y: Math.round(g.y), width: Math.max(8, Math.round(g.x2 - g.x)), height: Math.max(8, Math.round(g.y2 - g.y)) }
+      // OCR.space часто возвращает bbox в пикселях, относящихся к картинке (натуральным)
+      // Преобразуем сразу в объект parts с координатами в натуральных пикселях (как пришли)
+      const mapped = symbols.map((s, idx) => ({
+        id: `p-${idx}`,
+        number: s.text,
+        name: `Деталь ${s.text}`,
+        confidence: s.confidence,
+        // coordsFromOCR: ��ставляем оригинал, потом при рендере домножим на scaleX/scaleY
+        coordsFromOCR: { x: s.x, y: s.y, width: s.width, height: s.height }
       }));
 
-      setParts(newParts);
-      setStatus(`Распознано ${newParts.length} позиций`);
+      setParts(mapped);
+      setStatus(`OCR вернул ${mapped.length} результатов`);
     } catch (err) {
-      console.error('Ошибка распознавания:', err);
-      setStatus('Ошибка распознавания — смотрите консоль');
+      console.error('Ошибка OCR.space:', err);
+      setStatus(`Ошибка OCR: ${err.message}`);
     } finally {
       setLoading(false);
     }
   };
 
+  // Экспорт результатов (координаты в натуральных и в отображаемых пикселях)
+  const handleExport = () => {
+    const exportData = {
+      imageUrl,
+      imageMetrics: imgMetrics,
+      parts: parts.map(p => ({
+        id: p.id,
+        number: p.number,
+        confidence: p.confidence,
+        coordsFromOCR: p.coordsFromOCR,
+        coordsDisplay: {
+          x: Math.round(p.coordsFromOCR.x * imgMetrics.scaleX),
+          y: Math.round(p.coordsFromOCR.y * imgMetrics.scaleY),
+          width: Math.round(p.coordsFromOCR.width * imgMetrics.scaleX),
+          height: Math.round(p.coordsFromOCR.height * imgMetrics.scaleY)
+        }
+      })),
+      timestamp: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ocr-results-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Возвращает стиль для маркера (позиция в отображаемых пикселях)
+  const getMarkerStyle = (part) => {
+    const c = part.coordsFromOCR;
+    const left = Math.round((c.x || 0) * (imgMetrics.scaleX || 1));
+    const top = Math.round((c.y || 0) * (imgMetrics.scaleY || 1));
+    const width = Math.max(6, Math.round((c.width || 10) * (imgMetrics.scaleX || 1)));
+    const height = Math.max(6, Math.round((c.height || 10) * (imgMetrics.scaleY || 1)));
+
+    return {
+      position: 'absolute',
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${width}px`,
+      height: `${height}px`,
+      border: '2px solid rgba(102,126,234,0.9)',
+      background: 'rgba(102,126,234,0.12)',
+      borderRadius: 8,
+      zIndex: 20,
+      boxSizing: 'border-box',
+      overflow: 'hidden'
+    };
+  };
+
+  // Ресет
   const handleReset = () => {
     setImageUrl('');
     setParts([]);
-    setStatus('Выберите изображение схемы');
+    setStatus('Загрузите схему');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
     <div className="ocr-diagram-viewer">
       <div className="ocr-control-panel">
-        <input type="file" accept="image/*" onChange={handleImageUpload} ref={fileInputRef} style={{ display: 'none' }} id="image-upload" />
+        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleUpload} style={{ display: 'none' }} id="image-upload" />
         <label htmlFor="image-upload" className="ocr-upload-btn">📁 Загрузить схему</label>
 
         {imageUrl && (
           <>
             <button onClick={handleRecognize} disabled={loading} className="ocr-smart-btn">🧠 Распознать</button>
+            <button onClick={handleExport} className="ocr-export-btn">⬇️ Экспорт</button>
             <button onClick={handleReset} className="ocr-reset-btn">♻️ Сброс</button>
           </>
         )}
         <div className="ocr-status">{status}{loading ? ' ...' : ''}</div>
       </div>
 
-      <div className="ocr-image-container">
+      <div className="ocr-image-container" ref={wrapperRef} style={{ position: 'relative' }}>
         {imageUrl ? (
           <div className="ocr-image-wrapper" style={{ position: 'relative' }}>
-            <img ref={imageRef} src={imageUrl} alt="Схема" className="ocr-diagram-image" onLoad={handleImageLoad} style={{ display: 'block', maxWidth: '100%' }} />
+            <img
+              ref={imageRef}
+              src={imageUrl}
+              alt="Схема"
+              onLoad={handleImageLoad}
+              style={{ display: 'block', maxWidth: '100%', height: 'auto' }}
+            />
+
             {parts.map(part => (
-              <div key={part.id} className="ocr-digit-marker" style={{
-                position: 'absolute', left: `${part.coordinates.x}px`, top: `${part.coordinates.y}px`,
-                width: `${part.coordinates.width}px`, height: `${part.coordinates.height}px`,
-                border: '2px solid rgba(102,126,234,0.9)', background: 'rgba(102,126,234,0.12)', borderRadius: 8
-              }}>
-                <div style={{ position: 'absolute', top: '-22px', left: 0, background: '#667eea', color: '#fff', padding: '3px 6px', borderRadius: '12px', fontSize: 12, fontWeight: 700 }}>
-                  {part.number}
-                </div>
+              <div key={part.id} style={getMarkerStyle(part)} title={`${part.number} (conf: ${part.confidence})`}>
+                <div style={{
+                  position: 'absolute',
+                  top: '-20px',
+                  left: 0,
+                  background: '#667eea',
+                  color: '#fff',
+                  padding: '3px 6px',
+                  borderRadius: '12px',
+                  fontSize: 12,
+                  fontWeight: 700
+                }}>{part.number}</div>
               </div>
             ))}
           </div>
